@@ -15,33 +15,33 @@ torch.set_default_dtype(torch.float64)
 np.random.seed(42)
 
 # =============================================================================
-# CONFIGURATION — Tout modifier ici, le reste du code ne change pas
+# CONFIGURATION — Edit everything here, the rest of the code stays unchanged
 # =============================================================================
-LEMMATIZE     = True             # True pour activer la lemmatisation
-SPACY_MODEL   = "en_core_web_sm" # Modèle spaCy ("fr_core_news_sm" pour le français)
+LEMMATIZE     = True             # True to enable lemmatization
+SPACY_MODEL   = "en_core_web_sm" # spaCy model ("fr_core_news_sm" for French)
 
-MODE       = "csv"          # "simulate" ou "csv"
+MODE       = "csv"          # "simulate" or "csv"
 
-# --- Langue (stopwords + preprocessing) ---
-LANGUAGE = "english"   # "english" ou "french"
+# --- Language (stopwords + preprocessing) ---
+LANGUAGE = "english"   # "english" or "french"
 
-# --- Paramètres CSV (ignorés si MODE="simulate") ---
-DATA_PATH     = "DataSet/data_nyt_5k_sample.csv"       # Chemin vers votre fichier CSV
-COLUMN_DATE   = "date"           # Colonne date (format YYYY-MM-DD)
-COLUMN_TEXT   = "content"        # Colonne texte
-GRANULARITY   = "Y"              # 'Y'=année, 'M'=mois, 'Q'=trimestre
-MAX_FEATURES  = 100000              # Taille du vocabulaire
-MIN_DF        = 10                # Ignorer les mots dans moins de N docs
-MAX_DF        = 0.2             # Ignorer les mots dans plus de X% des docs
+# --- CSV parameters (ignored if MODE="simulate") ---
+DATA_PATH     = "DataSet/data_nyt_5k_sample.csv"       # Path to your CSV file
+COLUMN_DATE   = "date"           # Date column (format YYYY-MM-DD)
+COLUMN_TEXT   = "content"        # Text column
+GRANULARITY   = "Y"              # 'Y'=year, 'M'=month, 'Q'=quarter
+MAX_FEATURES  = 100000              # Vocabulary size
+MIN_DF        = 10                # Ignore words appearing in fewer than N docs
+MAX_DF        = 0.2             # Ignore words appearing in more than X% of docs
 
-# --- Paramètres du modèle ---
+# --- Model parameters ---
 N_TOPICS    = 5
 EPOCHS      = 1500
 LR          = 0.02
-SIGMA2      = 0.05              # Variance de transition des topics (beta)
-DELTA2      = 0.05               # Variance de transition des proportions (alpha)
+SIGMA2      = 0.05              # Topic transition variance (beta)
+DELTA2      = 0.05               # Proportion transition variance (alpha)
 
-# --- Paramètres simulation uniquement ---
+# --- Simulation-only parameters ---
 T_SIM = 20
 K_SIM = 5
 V_SIM = 90
@@ -49,15 +49,15 @@ D_SIM = 100
 
 
 # =============================================================================
-# 1. MODÈLE DTM — identique à youpi.py (c'est le cœur, on ne touche pas)
+# 1. DTM MODEL — identical to youpi.py (this is the core, do not modify)
 # =============================================================================
 
 class DynamicTopicModel(nn.Module):
     def __init__(self, num_topics, vocab_size, num_times, sigma2=0.01, delta2=0.05,
                  beta_init=None, alpha_init=None):
         """
-        beta_init  : [K, V]  log-probabilités initiales issues de LDA — optionnel
-        alpha_init : [T, K]  proportions temporelles initiales — optionnel
+        beta_init  : [K, V]  initial log-probabilities from LDA — optional
+        alpha_init : [T, K]  initial temporal proportions — optional
         """
         super().__init__()
         self.K = num_topics
@@ -67,15 +67,15 @@ class DynamicTopicModel(nn.Module):
         self.sigma2 = torch.tensor(sigma2)
         self.delta2 = torch.tensor(delta2)
 
-        # Paramètres variationnels — beta (topics) et alpha (proportions)
+        # Variational parameters — beta (topics) and alpha (proportions)
         self.beta_hat      = nn.Parameter(torch.randn(self.K, self.T, self.V) * 0.01)
         self.log_beta_nu2  = nn.Parameter(torch.zeros(self.K, self.T))
         self.alpha_hat     = nn.Parameter(torch.randn(self.T, self.K) * 0.01)
         self.log_alpha_nu2 = nn.Parameter(torch.ones(self.T) * -2.0)
 
-        # --- Initialisation LDA (brise la symétrie entre topics dès le départ) ---
+        # --- LDA initialization (breaks topic symmetry from the start) ---
         if beta_init is not None:
-            # beta_init [K, V] → même valeur sur toutes les tranches temporelles
+            # beta_init [K, V] → same value broadcast across all time slices
             with torch.no_grad():
                 self.beta_hat.data = (
                     beta_init.unsqueeze(1).expand(-1, self.T, -1).clone()
@@ -84,13 +84,13 @@ class DynamicTopicModel(nn.Module):
             with torch.no_grad():
                 self.alpha_hat.data = alpha_init.clone()
 
-        # Conditions initiales du filtre de Kalman
+        # Kalman filter initial conditions
         self.m0       = torch.zeros(self.V)
         self.V0       = torch.tensor(1.0)
         self.m0_alpha = torch.zeros(self.K)
 
     # -------------------------------------------------------------------------
-    # Filtre de Kalman : forward et backward (Appendix A, Blei 2006)
+    # Kalman filter: forward and backward (Appendix A, Blei 2006)
     # -------------------------------------------------------------------------
     def kalman_forward(self, obs_hat, obs_nu2, transition_sigma2, is_alpha=False):
         m_list, V_list = [], []
@@ -121,33 +121,33 @@ class DynamicTopicModel(nn.Module):
         return torch.stack(m_tilde_list), torch.stack(V_tilde_list)
 
     # -------------------------------------------------------------------------
-    # ELBO — borne variationnelle (Eq. 4–5, Blei 2006)
-    # corpus_counts : [T, K, V]  (counts par temps, topic, mot)
+    # ELBO — variational lower bound (Eq. 4–5, Blei 2006)
+    # corpus_counts : [T, K, V]  (counts per time, topic, word)
     # -------------------------------------------------------------------------
     def compute_elbo(self, corpus_counts):
         elbo = torch.tensor(0.0)
         beta_nu2 = torch.exp(self.log_beta_nu2).clamp(min=1e-12)
 
-        # --- 1. Termes Beta (topics) ---
+        # --- 1. Beta terms (topics) ---
         for k in range(self.K):
             m, V       = self.kalman_forward(self.beta_hat[k], beta_nu2[k], self.sigma2)
             m_t, V_t   = self.kalman_backward(m, V, self.sigma2)
 
-            # Prior (évolution lisse des topics dans le temps)
+            # Prior (smooth evolution of topics over time)
             diff  = m_t[1:] - m_t[:-1]
             prior = -0.5 * torch.sum(
                 diff**2 + V_t[1:].unsqueeze(-1) + V_t[:-1].unsqueeze(-1)
             ) / self.sigma2
             entropy = 0.5 * torch.sum(torch.log(V_t + 1e-12))
 
-            # Vraisemblance — borne Zeta (Appendix A)
+            # Likelihood — Zeta bound (Appendix A)
             zeta    = torch.exp(m_t + 0.5 * V_t.unsqueeze(-1)).sum(dim=-1)
             n_tk_w  = corpus_counts[:, k, :]                        # [T, V]
             log_lik = torch.sum(n_tk_w * m_t) - torch.sum(n_tk_w.sum(-1) * torch.log(zeta))
 
             elbo = elbo + prior + entropy + log_lik
 
-        # --- 2. Termes Alpha (proportions de topics) ---
+        # --- 2. Alpha terms (topic proportions) ---
         alpha_nu2     = torch.exp(self.log_alpha_nu2).clamp(min=1e-12)
         m_a, V_a      = self.kalman_forward(self.alpha_hat, alpha_nu2, self.delta2, is_alpha=True)
         m_a_t, V_a_t  = self.kalman_backward(m_a, V_a, self.delta2)
@@ -169,7 +169,7 @@ class DynamicTopicModel(nn.Module):
         return elbo + alpha_prior + alpha_entropy + alpha_log_lik
 
     # -------------------------------------------------------------------------
-    # Boucle d'entraînement
+    # Training loop
     # -------------------------------------------------------------------------
     def fit(self, corpus_counts, epochs=1500, lr=1e-2):
         optimizer = optim.AdamW(self.parameters(), lr=lr, weight_decay=1e-4)
@@ -185,17 +185,17 @@ class DynamicTopicModel(nn.Module):
 
             history.append(elbo.item())
 
-            # --- Critère d'arrêt robuste (moving average + patience) ---
+            # --- Robust stopping criterion (moving average + patience) ---
             EPS = 1e-3
 
             
 
-                # --- Critère d'arrêt (Norme classique) ---
+                # --- Stopping criterion (standard norm) ---
             if len(history) > 1:
-                # Changement relatif entre l'époque actuelle et la précédente
+                # Relative change between current and previous epoch
                 change = abs(history[-1] - history[-2]) / (abs(history[-2]) + 1e-12)
                 
-                # On peut baisser la patience car la mesure est instantanée
+                # Patience can be lower since the measure is instantaneous
                 EPS = 1e-5  
                 
                 if change < EPS:
@@ -205,7 +205,7 @@ class DynamicTopicModel(nn.Module):
 
                 # On autorise l'arrêt dès que le critère est stable
                 if patience_counter >= 5: 
-                    print(f"  Convergence atteinte à l'époque {epoch} (delta < {EPS}).")
+                    print(f"  Convergence reached at epoch {epoch} (delta < {EPS}).")
                     break
 
     
@@ -214,11 +214,11 @@ class DynamicTopicModel(nn.Module):
 
 
 # =============================================================================
-# 2. SIMULATION — inchangée par rapport à youpi.py
+# 2. SIMULATION — unchanged from youpi.py
 # =============================================================================
 
 def simulate_data(T=10, K=3, V=50, D_per_t=100):
-    """Génère un corpus synthétique selon le processus génératif du DTM."""
+    """Generates a synthetic corpus following the DTM generative process."""
     beta  = torch.zeros(K, T, V)
     alpha = torch.zeros(T, K)
 
@@ -226,7 +226,7 @@ def simulate_data(T=10, K=3, V=50, D_per_t=100):
         beta[:, t, :]  = beta[:, t-1, :] + torch.randn(K, V) * 0.1
         alpha[t, :]    = alpha[t-1, :] + torch.randn(K) * 0.3
 
-    # corpus_counts[t, k, v] = nb occurrences du mot v dans le topic k au temps t
+    # corpus_counts[t, k, v] = number of occurrences of word v in topic k at time t
     corpus_counts = torch.zeros(T, K, V)
     for t in range(T):
         theta = torch.softmax(alpha[t], dim=-1)
@@ -243,7 +243,7 @@ def simulate_data(T=10, K=3, V=50, D_per_t=100):
 
 
 # =============================================================================
-# 3. CHARGEMENT CSV — minimal et robuste
+# 3. CSV LOADING — minimal and robust
 # =============================================================================
 
 import spacy
@@ -273,7 +273,7 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
     spacy_model = get_spacy_model(language)
 
     try:
-        # tagger requis pour POS (lemmatisation), ner pour blacklist entités
+        # tagger required for POS (lemmatization), ner for entity blacklist
         nlp = spacy.load(spacy_model, disable=["parser"])
     except OSError:
         raise OSError(
@@ -288,7 +288,7 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
     df[col_text] = df[col_text].astype(str)
 
     # -------------------------
-    # Nettoyage de base + lowercase
+    # Basic cleaning + lowercase
     # -------------------------
     def clean_text(text):
         text = re.sub(r"<.*?>", " ", text)
@@ -298,9 +298,9 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
     df[col_text] = df[col_text].apply(clean_text)
 
     # -------------------------
-    # Suppression des n-grammes parasites (regex, robuste au lowercasing)
-    # "new york" supprimé comme bigramme ; "new" seul dans un autre
-    # contexte est conservé puis filtré par CUSTOM_STOPWORDS si besoin.
+    # Remove noisy n-grams (regex, robust to lowercasing)
+    # 
+    # context is kept, then filtered by CUSTOM_STOPWORDS if needed.
     # -------------------------
     NGRAM_BLACKLIST = [
         r"\bnew\s+york\s+times\b",
@@ -318,7 +318,7 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
     df[col_text] = df[col_text].apply(remove_blacklisted_ngrams)
 
     # -------------------------
-    # Lemmatisation
+    # Lemmatization
     # -------------------------
     if LEMMATIZE:
         if progress_callback: progress_callback(35, "Lemmatization in progress (spaCy)...")
@@ -369,10 +369,10 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
     else:
         stop_words = set(ENGLISH_STOP_WORDS)
 
-    # Mots trop génériques / liés à la source : à exclure du vocabulaire
+    # Too generic / source-specific words: exclude from vocabulary
     CUSTOM_STOPWORDS = {
-        "york", "new", "times", "nytimes",   # résidus NYT
-        "say", "said", "mr", "ms", "mrs",    # verbes/titres journalistiques
+        "york", "new", "times", "nytimes",   # NYT residuals
+        "say", "said", "mr", "ms", "mrs",    # journalistic verbs/titles
     }
     stop_words = stop_words | CUSTOM_STOPWORDS
 
@@ -436,11 +436,11 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
 
 
 # =============================================================================
-# 4. HELPERS KALMAN — utilisés par tous les plots
+# 4. KALMAN HELPERS — used by all plots
 # =============================================================================
 
 def get_smoothed_beta(model, k):
-    """Moyennes et variances lissées du topic k → m_t [T,V], V_t [T]."""
+    """Smoothed means and variances for topic k → m_t [T,V], V_t [T]."""
     with torch.no_grad():
         m, V_f    = model.kalman_forward(
             model.beta_hat[k], torch.exp(model.log_beta_nu2[k]), model.sigma2
@@ -450,7 +450,7 @@ def get_smoothed_beta(model, k):
 
 
 def get_smoothed_alpha(model):
-    """Proportions lissées (softmax) et variances → props [T,K], V_t [T]."""
+    """Smoothed proportions (softmax) and variances → props [T,K], V_t [T]."""
     with torch.no_grad():
         m_a, V_a      = model.kalman_forward(
             model.alpha_hat, torch.exp(model.log_alpha_nu2), model.delta2, is_alpha=True
@@ -461,13 +461,13 @@ def get_smoothed_alpha(model):
 
 
 # =============================================================================
-# 5. VISUALISATIONS — communes (simulation + CSV)
+# 5. VISUALIZATIONS — common (simulation + CSV)
 # =============================================================================
 
 # --- Plot A : ELBO ----------------------------------------------------------
 
 def plot_elbo(history):
-    """Courbe de convergence de l'ELBO."""
+    """ELBO convergence curve."""
     plt.figure(figsize=(9, 3))
     plt.plot(history, color='steelblue', lw=1.5)
     plt.title("Convergence de l'ELBO", fontsize=13)
@@ -481,7 +481,7 @@ def plot_elbo(history):
 # --- Plot B : Top mots par topic --------------------------------------------
 
 def plot_top_words(model, vocab, n_words=8, time_idx=-1):
-    """Barres horizontales des top mots pour chaque topic à un instant t."""
+    """Horizontal bar chart of top words for each topic at a given time t."""
     K     = model.K
     cols  = min(3, K)
     rows  = int(np.ceil(K / cols))
@@ -506,7 +506,7 @@ def plot_top_words(model, vocab, n_words=8, time_idx=-1):
     for k in range(K, rows * cols):
         axes[k // cols][k % cols].set_visible(False)
 
-    label = "dernière période" if time_idx == -1 else f"période {time_idx}"
+    label = "last period" if time_idx == -1 else f"period {time_idx}"
     plt.suptitle(f"Top {n_words} mots par topic ({label})", fontsize=14)
     plt.tight_layout()
     plt.show()
@@ -515,7 +515,7 @@ def plot_top_words(model, vocab, n_words=8, time_idx=-1):
 # --- Plot C : Évolution temporelle des topics (alpha) -----------------------
 
 def plot_topic_evolution(model, time_labels=None):
-    """Courbes de dominance des topics au fil du temps."""
+    """Topic dominance curves over time."""
     props, _  = get_smoothed_alpha(model)
     T, K      = props.shape
     times     = [str(p) for p in time_labels] if time_labels is not None else list(range(T))
@@ -538,7 +538,7 @@ def plot_topic_evolution(model, time_labels=None):
 # --- Plot D : Distribution empilée ------------------------------------------
 
 def plot_stacked_topics(model, time_labels=None):
-    """Aire empilée des proportions de topics dans le temps."""
+    """Stacked area chart of topic proportions over time."""
     props, _  = get_smoothed_alpha(model)
     T, K      = props.shape
     times     = [str(p) for p in time_labels] if time_labels is not None else list(range(T))
@@ -562,15 +562,15 @@ def plot_stacked_topics(model, time_labels=None):
 
 
 # =============================================================================
-# 6. VISUALISATIONS SIMULATION — vrai vs estimé
+# 6. SIMULATION VISUALIZATIONS — true vs estimated
 # =============================================================================
 
-# --- Plot S1 : Trajectoires de mots — estimé vs vrai (multi-topic) ----------
+# --- Plot S1 : Word trajectories — estimated vs true (multi-topic) ----------
 
 def plot_word_trajectories(model, true_beta, n_words=4):
     """
-    Pour chaque topic : n_words mots avec leur trajectoire log-prob estimée
-    (trait plein + intervalle de confiance à 1σ) vs vraie (pointillés).
+    For each topic: n_words words with their estimated log-prob trajectory
+    (solid line + 1σ confidence interval) vs true (dashed).
     """
     K      = model.K
     T      = model.T
@@ -586,8 +586,8 @@ def plot_word_trajectories(model, true_beta, n_words=4):
         m_t, V_t   = get_smoothed_beta(model, k)               # [T,V], [T]
         std_t      = torch.sqrt(V_t).numpy()                    # [T]
 
-        # Sélectionner les mots ayant la variance la plus forte dans le vrai beta
-        # (les mots qui bougent le plus sont les plus informatifs)
+        # Select words with the highest variance in true beta
+        # (words that move the most are the most informative)
         true_var   = true_beta[k].var(dim=0).numpy()            # [V]
         word_idx   = np.argsort(true_var)[-n_words:][::-1]
 
@@ -616,12 +616,12 @@ def plot_word_trajectories(model, true_beta, n_words=4):
     plt.show()
 
 
-# --- Plot S2 : Alpha — estimé vs vrai --------------------------------------
+# --- Plot S2 : Alpha — estimated vs true --------------------------------------
 
 def plot_alpha_true_vs_est(model, true_alpha):
     """
-    Proportions de topics au fil du temps : estimé vs vrai.
-    Une courbe par topic, avec l'intervalle de confiance du lisseur Kalman.
+    Topic proportions over time: estimated vs true.
+    One curve per topic, with the Kalman smoother confidence interval.
     """
     T      = model.T
     K      = model.K
@@ -657,14 +657,14 @@ def plot_alpha_true_vs_est(model, true_alpha):
     plt.show()
 
 
-# --- Plot S3 : Heatmaps β — estimé vs vrai côte à côte ---------------------
+# --- Plot S3 : β heatmaps — estimated vs true side by side ---------------------
 
 def plot_beta_heatmaps(model, true_beta, n_words=20):
     """
-    Pour chaque topic : deux heatmaps côte à côte.
-    Gauche  = P(mot | topic, t) estimé
-    Droite  = P(mot | topic, t) vrai
-    Axe X = temps, Axe Y = top mots
+    For each topic: two heatmaps side by side.
+    Left   = P(word | topic, t) estimated
+    Right  = P(word | topic, t) true
+    X axis = time, Y axis = top words
     """
     K      = model.K
     colors_list = ['Blues', 'Oranges', 'Greens', 'Purples', 'Reds',
@@ -675,7 +675,7 @@ def plot_beta_heatmaps(model, true_beta, n_words=20):
         probs_est  = torch.softmax(m_t, dim=-1).detach().numpy()   # [T, V]
         probs_true = torch.softmax(true_beta[k], dim=-1).numpy()   # [T, V]
 
-        # Top mots selon les vraies probabilités moyennes
+        # Top words according to average true probabilities
         top_idx    = np.argsort(probs_true.mean(axis=0))[-n_words:][::-1]
 
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5), sharey=True)
@@ -701,12 +701,12 @@ def plot_beta_heatmaps(model, true_beta, n_words=20):
         plt.show()
 
 
-# --- Plot S4 : Incertitude variationnelle ν² par topic ---------------------
+# --- Plot S4 : Variational uncertainty ν² per topic ---------------------
 
 def plot_kalman_uncertainty(model):
     """
-    ν²_t (variance variationnelle) de chaque topic au fil du temps.
-    Indique où le modèle est incertain sur ses observations.
+    ν²_t (variational variance) of each topic over time.
+    Indicates where the model is uncertain about its observations.
     """
     T      = model.T
     K      = model.K
@@ -721,8 +721,8 @@ def plot_kalman_uncertainty(model):
     for k in range(K):
         ax.plot(times, v_beta[k], label=f"Topic {k}", color=colors[k % 10], lw=2)
     ax.set_yscale('log')
-    ax.set_title("Incertitude variationnelle β (ν²_t)", fontweight='bold')
-    ax.set_xlabel("Temps")
+    ax.set_title("Variational uncertainty β (ν²_t)", fontweight='bold')
+    ax.set_xlabel("Time")
     ax.set_ylabel("ν² (log scale)")
     ax.legend()
     ax.grid(alpha=0.3)
@@ -733,22 +733,22 @@ def plot_kalman_uncertainty(model):
     ax.plot(times, v_alpha, color='black', lw=2)
     ax.fill_between(times, 0, v_alpha, alpha=0.15, color='black')
     ax.set_yscale('log')
-    ax.set_title("Incertitude variationnelle α (ν²_t)", fontweight='bold')
-    ax.set_xlabel("Temps")
+    ax.set_title("Variational uncertainty α (ν²_t)", fontweight='bold')
+    ax.set_xlabel("Time")
     ax.set_ylabel("ν² (log scale)")
     ax.grid(alpha=0.3)
 
-    plt.suptitle("Incertitude du filtre de Kalman variationnel", fontsize=13)
+    plt.suptitle("Variational Kalman filter uncertainty", fontsize=13)
     plt.tight_layout()
     plt.show()
 
 
-# --- Plot S5 : Résidus — estimé − vrai (alpha) ------------------------------
+# --- Plot S5 : Residuals — estimated − true (alpha) ------------------------------
 
 def plot_alpha_residuals(model, true_alpha):
     """
-    Résidus par topic : (proportion estimée) − (proportion vraie).
-    Aide à voir si un topic est systématiquement sur- ou sous-estimé.
+    Residuals per topic: (estimated proportion) − (true proportion).
+    Helps identify if a topic is systematically over- or under-estimated.
     """
     T      = model.T
     K      = model.K
@@ -776,15 +776,15 @@ def plot_alpha_residuals(model, true_alpha):
     plt.show()
 
 
-# --- Plot S6 : Tuiles de validation — top mots estimé vs vrai --------------
+# --- Plot S6 : Validation tiles — estimated vs true top words --------------
 
 def plot_topic_tiles_validation(model, true_beta, vocab, n_words=6):
     """
-    Grille (un panneau par topic).
-    Dans chaque panneau : 2 colonnes de barres côte à côte
-      - Estimé (plein)   : top mots selon le modèle
-      - Vrai  (hachuré)  : top mots selon le vrai beta
-    Permet de voir si les mots dominants sont bien récupérés.
+    Grid (one panel per topic).
+    Each panel: 2 side-by-side bar columns
+      - Estimated (solid)  : top words according to the model
+      - True      (hatched): top words according to true beta
+    Allows checking whether dominant words are correctly recovered.
     """
     K      = model.K
     colors = cm.tab10.colors
@@ -797,16 +797,16 @@ def plot_topic_tiles_validation(model, true_beta, vocab, n_words=6):
         ax = axes[k // cols][k % cols]
         c  = colors[k % 10]
 
-        # --- Estimé : probabilités à la dernière période ---
+        # --- Estimated: probabilities at the last time period ---
         m_t, _     = get_smoothed_beta(model, k)
         probs_est  = torch.softmax(m_t[-1], dim=-1).detach().numpy()
         top_est    = np.argsort(probs_est)[-n_words:][::-1]
 
-        # --- Vrai : probabilités moyennes sur toutes les périodes ---
+        # --- True: average probabilities over all time periods ---
         probs_true = torch.softmax(true_beta[k], dim=-1).mean(dim=0).numpy()
         top_true   = np.argsort(probs_true)[-n_words:][::-1]
 
-        # Union des mots importants (estimés + vrais)
+        # Union of important words (estimated + true)
         all_idx    = list(dict.fromkeys(list(top_est) + list(top_true)))[:n_words * 2]
         labels     = [vocab[i] for i in all_idx]
         p_est      = probs_est[all_idx]
@@ -814,13 +814,13 @@ def plot_topic_tiles_validation(model, true_beta, vocab, n_words=6):
 
         x    = np.arange(len(labels))
         w    = 0.38
-        ax.barh(x + w/2, p_est,  w, color=c,     alpha=0.85, label="Estimé")
+        ax.barh(x + w/2, p_est,  w, color=c,     alpha=0.85, label="Estimated")
         ax.barh(x - w/2, p_true, w, color='grey', alpha=0.55,
-                hatch='//', label="Vrai")
+                hatch='//', label="True")
         ax.set_yticks(x)
         ax.set_yticklabels(labels, fontsize=9)
         ax.set_title(f"Topic {k}", fontweight='bold')
-        ax.set_xlabel("Probabilité")
+        ax.set_xlabel("Probability")
         ax.legend(fontsize='x-small')
         ax.grid(axis='x', alpha=0.3)
 
@@ -828,25 +828,25 @@ def plot_topic_tiles_validation(model, true_beta, vocab, n_words=6):
         axes[k // cols][k % cols].set_visible(False)
 
     plt.suptitle(
-        "Validation des top-mots : Estimé (plein) vs Vrai (hachuré)",
+        "Top-word validation: Estimated (solid) vs True (hatched)",
         fontsize=14
     )
     plt.tight_layout()
     plt.show()
 
 
-# --- Plot S7 : Tableau des métriques ----------------------------------------
+# --- Plot S7 : Metrics table ----------------------------------------
 
 def print_metrics(model, true_beta, true_alpha):
     """
-    Affiche un tableau console : MSE et corrélation de Pearson
-    pour beta et alpha, topic par topic.
+    Prints a console table: MSE and Pearson correlation
+    for beta and alpha, topic by topic.
     """
     from scipy.stats import pearsonr
 
     K = model.K
     print("\n" + "=" * 60)
-    print(f"{'MÉTRIQUES DE VALIDATION':^60}")
+    print(f"{'VALIDATION METRICS':^60}")
     print("=" * 60)
     print(f"{'Topic':<8} {'MSE β':>10} {'Corr β':>10} {'MSE α':>10} {'Corr α':>10}")
     print("-" * 60)
@@ -882,7 +882,7 @@ def print_metrics(model, true_beta, true_alpha):
         print(f"{k:<8} {mse_b:>10.5f} {corr_b:>10.3f} {mse_a:>10.5f} {corr_a:>10.3f}")
 
     print("-" * 60)
-    print(f"{'Moyenne':<8} "
+    print(f"{'Mean':<8} "
           f"{np.mean(mse_b_list):>10.5f} "
           f"{np.mean(corr_b_list):>10.3f} "
           f"{np.mean(mse_a_list):>10.5f} "
@@ -891,30 +891,30 @@ def print_metrics(model, true_beta, true_alpha):
 
 
 # =============================================================================
-# 7. EXÉCUTION PRINCIPALE
+# 7. MAIN EXECUTION
 # =============================================================================
 
 if __name__ == "__main__":
 
     # ------------------------------------------------------------------
-    # MODE SIMULATION
+    # SIMULATION MODE
     # ------------------------------------------------------------------
     if MODE == "simulate":
-        print("=== Mode simulation ===")
+        print("=== Simulation mode ===")
         corpus_counts, true_beta, true_alpha = simulate_data(
             T=T_SIM, K=K_SIM, V=V_SIM, D_per_t=D_SIM
         )
         K, T, V      = K_SIM, T_SIM, V_SIM
-        vocab        = [f"mot_{i}" for i in range(V)]
+        vocab        = [f"word_{i}" for i in range(V)]
         time_labels  = list(range(T))
-        beta_init    = None   # simulation : initialisation aléatoire suffisante
-        alpha_init   = None   # (les vraies assignations sont connues dans corpus_counts)
+        beta_init    = None   # simulation: random initialization is sufficient
+        alpha_init   = None   # (true assignments are known from corpus_counts)
 
     # ------------------------------------------------------------------
-    # MODE CSV
+    # CSV MODE
     # ------------------------------------------------------------------
     elif MODE == "csv":
-        print("=== Mode données réelles (CSV) ===")
+        print("=== Real data mode (CSV) ===")
         corpus_counts, vocab, time_labels, beta_init, alpha_init = load_csv_data(
             path        = DATA_PATH,
             col_date    = COLUMN_DATE,
@@ -931,14 +931,14 @@ if __name__ == "__main__":
         true_alpha   = None
 
     else:
-        raise ValueError(f"MODE doit être 'simulate' ou 'csv', pas '{MODE}'")
+        raise ValueError(f"MODE must be 'simulate' or 'csv', not '{MODE}'")
 
-    print(f"\n  Corpus : T={T} tranches | K={K} topics | V={V} mots\n")
+    print(f"\n  Corpus: T={T} slices | K={K} topics | V={V} words\n")
 
     # ------------------------------------------------------------------
-    # ENTRAÎNEMENT
+    # TRAINING
     # ------------------------------------------------------------------
-    print(f"=== Entraînement ({EPOCHS} epochs max) ===")
+    print(f"=== Training ({EPOCHS} epochs max) ===")
     model   = DynamicTopicModel(
         num_topics=K, vocab_size=V, num_times=T,
         sigma2=SIGMA2, delta2=DELTA2,
@@ -947,39 +947,39 @@ if __name__ == "__main__":
     history = model.fit(corpus_counts, epochs=EPOCHS, lr=LR)
 
     # ------------------------------------------------------------------
-    # VISUALISATIONS COMMUNES
+    # COMMON VISUALIZATIONS
     # ------------------------------------------------------------------
-    print("\n=== Visualisations communes ===")
+    print("\n=== Common visualizations ===")
     plot_elbo(history)
     plot_top_words(model, vocab, n_words=8)
     plot_topic_evolution(model, time_labels)
     plot_stacked_topics(model, time_labels)
 
     # ------------------------------------------------------------------
-    # VISUALISATIONS SIMULATION — vrai vs estimé
+    # SIMULATION VISUALIZATIONS — true vs estimated
     # ------------------------------------------------------------------
     if MODE == "simulate":
-        print("\n=== Diagnostics simulation (vrai vs estimé) ===")
+        print("\n=== Simulation diagnostics (true vs estimated) ===")
 
-        # S1 — Trajectoires de mots avec IC
+        # S1 — Word trajectories with CI
         plot_word_trajectories(model, true_beta, n_words=4)
 
-        # S2 — Proportions alpha estimé vs vrai
+        # S2 — Alpha proportions estimated vs true
         plot_alpha_true_vs_est(model, true_alpha)
 
-        # S3 — Heatmaps beta côte à côte
+        # S3 — Beta heatmaps side by side
         plot_beta_heatmaps(model, true_beta, n_words=20)
 
-        # S4 — Incertitude variationnelle ν²
+        # S4 — Variational uncertainty ν²
         plot_kalman_uncertainty(model)
 
-        # S5 — Résidus alpha
+        # S5 — Alpha residuals
         plot_alpha_residuals(model, true_alpha)
 
-        # S6 — Tuiles top mots estimé vs vrai
+        # S6 — Top words estimated vs true tiles
         plot_topic_tiles_validation(model, true_beta, vocab, n_words=6)
 
-        # S7 — Tableau de métriques console
+        # S7 — Console metrics table
         print_metrics(model, true_beta, true_alpha)
 
 # %%

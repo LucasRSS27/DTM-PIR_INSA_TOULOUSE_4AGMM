@@ -617,7 +617,7 @@ def server(input, output, session):
         except:
             start, end = tl[0], tl[-1]
         
-        # 👉 BADGES POUR LES DATES
+        
         return ui.tags.div(
             ui.tags.span(start, class_="date-badge"),
             ui.tags.span("→", style="color:var(--muted); font-size:0.8rem; display:flex; align-items:center;"),
@@ -781,7 +781,7 @@ def server(input, output, session):
     def overview_stats():
         ms, fs, qs = model_state.get(), filter_state.get(), quick_stats()
         
-        # 👉 LOGIQUE DES BADGES ARRONDIS
+        
         if ms: data, status_txt, cls = ms, "● Model Trained", "trained"
         elif fs: data, status_txt, cls = fs, "● Filter Applied", "filtered"
         elif qs: data, status_txt, cls = qs, "○ Filter Pending", "pending"
@@ -917,7 +917,7 @@ def server(input, output, session):
         x = [str(t) for t in ms["time"]]
         sw = _adaptive_smooth_window(len(x))
         
-        # 👉 GRAPH COMME AVANT : Lignes simples au lieu d'empilées (stackgroup retiré)
+        
         fig = go.Figure()
         for k in range(props.shape[1]):
             fig.add_trace(go.Scatter(
