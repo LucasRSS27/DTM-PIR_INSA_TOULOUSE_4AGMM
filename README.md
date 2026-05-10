@@ -24,7 +24,7 @@ This repository contains a modernized implementation of **Dynamic Topic Modeling
 2. **Download spaCy model:** `python -m spacy download en_core_web_sm`
 3. **Launch the dashboard:**
 ```bash
-shiny run dash.py
+shiny run DTM_dash.py
 
 ```
 
