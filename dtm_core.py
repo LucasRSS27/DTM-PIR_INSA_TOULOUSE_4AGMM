@@ -281,8 +281,8 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
             f"Run: python -m spacy download {spacy_model}"
         )
 
-    if progress_callback: progress_callback(5, "Chargement du CSV...")
-    else: print("  Chargement du CSV...")
+    if progress_callback: progress_callback(5, "Loading CSV...")
+    else: print("  Loading CSV...")
     df = pd.read_csv(path, parse_dates=[col_date])
     df = df.dropna(subset=[col_date, col_text])
     df[col_text] = df[col_text].astype(str)
@@ -313,16 +313,16 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
             text = re.sub(pattern, " ", text)
         return re.sub(r"\s+", " ", text).strip()
 
-    if progress_callback: progress_callback(20, "Suppression des n-grammes parasites...")
-    else: print("  Suppression des n-grammes parasites...")
+    if progress_callback: progress_callback(20, "Lemmatization in progress (spaCy)...")
+    else: print(" Lemmatization in progress (spaCy)...")
     df[col_text] = df[col_text].apply(remove_blacklisted_ngrams)
 
     # -------------------------
     # Lemmatisation
     # -------------------------
     if LEMMATIZE:
-        if progress_callback: progress_callback(35, "Lemmatisation en cours (spaCy)...")
-        else: print("  Lemmatisation en cours (spaCy)...")
+        if progress_callback: progress_callback(35, "Lemmatization in progress (spaCy)...")
+        else: print("Lemmatization in progress (spaCy)...")
         texts = []
         for doc in nlp.pipe(df[col_text], batch_size=500):
             tokens = [
@@ -333,8 +333,8 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
             texts.append(" ".join(tokens))
 
         df[col_text] = texts
-        if progress_callback: progress_callback(55, "Lemmatisation terminée.")
-        else: print("  Lemmatisation terminée.")
+        if progress_callback: progress_callback(55, "Lemmatization completed.")
+        else: print("  Lemmatization completed.")
 
     df = df[df[col_text].str.strip() != ""]
     df = df.sort_values(col_date).reset_index(drop=True)
@@ -392,8 +392,8 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
     vocab = vectorizer.get_feature_names_out()
     V = len(vocab)
 
-    if progress_callback: progress_callback(65, f"Vocabulaire : {V} mots — Initialisation LDA...")
-    else: print(f"  Vocabulaire : {V} mots")
+    if progress_callback: progress_callback(65, f"Vocabulary : {V} words — LDA Initialization...")
+    else: print(f"  Vocabulary : {V} words")
 
     # -------------------------
     # LDA init (for DTM initialization)
@@ -408,7 +408,7 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
     )
 
     doc_topic = lda.fit_transform(dtm)
-    if progress_callback: progress_callback(90, "LDA terminé — Préparation du corpus...")
+    if progress_callback: progress_callback(90, "LDA completed — Corpus preprocessing in progress...")
 
     corpus_counts = torch.zeros(T, n_topics, V, dtype=torch.float64)
 
