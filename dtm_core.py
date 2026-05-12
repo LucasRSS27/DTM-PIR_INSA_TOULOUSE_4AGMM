@@ -32,7 +32,7 @@ COLUMN_TEXT   = "content"        # Text column
 GRANULARITY   = "Y"              # 'Y'=year, 'M'=month, 'Q'=quarter
 MAX_FEATURES  = 100000              # Vocabulary size
 MIN_DF        = 10                # Ignore words appearing in fewer than N docs
-MAX_DF        = 0.2             # Ignore words appearing in more than X% of docs
+MAX_DF        = 1.0            # Ignore words appearing in more than X% of docs
 
 # --- Model parameters ---
 N_TOPICS    = 5
@@ -325,11 +325,16 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
         else: print("Lemmatization in progress (spaCy)...")
         texts = []
         for doc in nlp.pipe(df[col_text], batch_size=500):
-            tokens = [
-                token.lemma_.lower()
-                for token in doc
-                if token.is_alpha and not token.is_space
-            ]
+            # Tokens appartenant à une entité NER → forme originale (pas de lemmatisation)
+            ner_tokens = {token.i for ent in doc.ents for token in ent}
+            tokens = []
+            for token in doc:
+                if not token.is_alpha or token.is_space:
+                    continue
+                if token.i in ner_tokens:
+                    tokens.append(token.text.lower())   # nom propre : forme brute
+                else:
+                    tokens.append(token.lemma_.lower()) # mot commun : lemme
             texts.append(" ".join(tokens))
 
         df[col_text] = texts

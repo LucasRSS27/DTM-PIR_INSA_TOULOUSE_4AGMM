@@ -438,7 +438,7 @@ app_ui = ui.page_sidebar(
 
         ui.h6("FILTERS", class_="section-title"),
         ui.input_select("language", "Language", choices={"english": "English", "french": "Français"}, selected="english"),
-        ui.input_select("granularity", "Time period", choices={"Y": "Year", "Q": "Quarter", "M": "Month"}, selected="Y"),
+        ui.input_select("granularity", "Time period", choices={"Y": "Year", "Q": "Quarter", "M": "Month", "W": "Week"}, selected="Y"),
         ui.output_ui("time_range_ui"),
         ui.hr(),
 
