@@ -1019,12 +1019,11 @@ def server(input, output, session):
         if not ms: return ui.p("Train a model to see word clouds.", style="color:var(--muted);")
         model, vocab, K = ms["model"], ms["vocab"], ms["model"].K
         imgs = []
-        COLORS_HEX = ["#3b82f6","#f97316","#22c55e","#a855f7","#ef4444","#06b6d4","#eab308","#ec4899","#14b8a6","#f59e0b"]
         for k in range(K):
             m_t, _ = get_smoothed_beta(model, k)
             probs = torch.softmax(m_t.mean(dim=0), dim=-1).detach().numpy()
             freq = {vocab[i]: float(probs[i]) for i in range(len(vocab))}
-            color = COLORS_HEX[k % len(COLORS_HEX)]
+            color = COLORS_10[k % len(COLORS_10)]
             def make_color_func(c):
                 import random
                 r, g, b = int(c[1:3],16), int(c[3:5],16), int(c[5:7],16)
