@@ -389,8 +389,19 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
     # -------------------------
     from sklearn.feature_extraction.text import CountVectorizer
 
+    import re as _re
+    _tok = _re.compile(r"(?u)\b\w{3,}\b")
+
+    # Aligne les stopwords sur le token_pattern : on ajoute les fragments générés
+    # par la tokenisation des stopwords composés (ex: "quelqu'un" → "quelqu")
+    expanded_stop = set()
+    for w in stop_words:
+        expanded_stop.add(w)
+        for fragment in _tok.findall(w):
+            expanded_stop.add(fragment)
+
     vectorizer = CountVectorizer(
-        stop_words=list(stop_words),
+        stop_words=list(expanded_stop),
         max_features=max_features,
         min_df=min_df,
         max_df=max_df,

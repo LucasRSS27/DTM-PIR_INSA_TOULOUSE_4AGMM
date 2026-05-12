@@ -683,7 +683,7 @@ def server(input, output, session):
         corpus, vocab, time_labels_f, beta_init, alpha_init = load_csv_data(
             path=f[0]["datapath"], col_date=input.col_date(), col_text=input.col_content(),
             granularity=input.granularity(), n_topics=input.topics(),
-            max_features=100000, min_df=1, max_df=1.0, language=input.language(),
+            max_features=100000, min_df=2, max_df=0.85, language=input.language(),
             progress_callback=lambda p, m: progress_ctx.set(int(p*0.9), message=m) if progress_ctx else None,
             date_start=t_start, date_end=t_end,
         )
