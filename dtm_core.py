@@ -292,8 +292,8 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
     # -------------------------
     def clean_text(text):
         text = re.sub(r"<.*?>", " ", text)
-        text = re.sub(r"[^a-zA-Zàâçéèêëîïôûùüÿñæœ\s]", " ", text)
-        return text.lower().strip()
+        text = re.sub(r"[^a-zA-ZàâçéèêëîïôûùüÿñæœÀÂÇÉÈÊËÎÏÔÛÙÜŸÑÆŒ\s]", " ", text)
+        return text.strip()  # pas de lower() ici : le NER a besoin des majuscules
 
     df[col_text] = df[col_text].apply(clean_text)
 
@@ -310,7 +310,7 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
 
     def remove_blacklisted_ngrams(text):
         for pattern in NGRAM_BLACKLIST:
-            text = re.sub(pattern, " ", text)
+            text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
         return re.sub(r"\s+", " ", text).strip()
 
     if progress_callback: progress_callback(20, "Lemmatization in progress (spaCy)...")
@@ -340,6 +340,9 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
         df[col_text] = texts
         if progress_callback: progress_callback(55, "Lemmatization completed.")
         else: print("  Lemmatization completed.")
+    else:
+        # Pas de lemmatisation mais on lowercase quand même
+        df[col_text] = df[col_text].str.lower()
 
     df = df[df[col_text].str.strip() != ""]
     df = df.sort_values(col_date).reset_index(drop=True)

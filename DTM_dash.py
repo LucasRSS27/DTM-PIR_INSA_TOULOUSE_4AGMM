@@ -8,6 +8,8 @@ import torch
 import pandas as pd
 import sys
 import io
+from wordcloud import WordCloud
+from PIL import Image
 
 from dtm_core import (
     DynamicTopicModel,
@@ -167,7 +169,6 @@ input[type=file] { display: none !important; }
     border-radius: 999px !important;
     transition: width 0.25s ease !important;
 }
-
 /* ── NAVBAR TABS ─────────────────────────────────────────────── */
 .navbar {
     border: 1px solid var(--border) !important;
@@ -520,6 +521,11 @@ app_ui = ui.page_sidebar(
                 output_widget("evolution"),
                 class_="dtm-card"
             ),
+            ui.tags.div(
+                ui.tags.p("Word clouds by topic", class_="section-title"),
+                ui.output_ui("wordclouds"),
+                class_="dtm-card"
+            ),
         ),
 
         ui.nav_panel("Diagnostics",
@@ -761,6 +767,7 @@ def server(input, output, session):
 
         model_state.set({
             "model": model, "history": history, "vocab": fs["vocab"], "time": fs["time_labels"],
+            "corpus": fs["corpus"],
             "df": fs["df"], "word_counts": fs["word_counts"], "lr": optimizer.param_groups[0]["lr"],
             "n_docs": fs["n_docs"], "vocab_size": fs["vocab_size"], "avg_len": fs["avg_len"]
         })
@@ -905,18 +912,40 @@ def server(input, output, session):
             all_freq_t = [torch.softmax(get_smoothed_beta(model, k)[0][t_idx], dim=-1).detach().numpy() for k in range(K)]
             mean_across = np.clip(np.mean(all_freq_t, axis=0), 1e-10, None)
 
-        fig = make_subplots(rows=int(np.ceil(K / 2)), cols=2, subplot_titles=[f"Topic {k}" for k in range(K)], vertical_spacing=0.1)
-        
+        topic_rows = int(np.ceil(K / 2))
+        total_rows = topic_rows + 1
+        subplot_titles = [f"Topic {k}" for k in range(K)] + [""] * (topic_rows * 2 - K) + ["All topics"]
+        specs = [[{}, {}]] * topic_rows + [[{"colspan": 2}, None]]
+
+        fig = make_subplots(
+            rows=total_rows, cols=2,
+            subplot_titles=subplot_titles,
+            specs=specs,
+            vertical_spacing=0.08,
+        )
+
         for k in range(K):
             probs = torch.softmax(get_smoothed_beta(model, k)[0][t_idx], dim=-1).detach().numpy()
             score = (probs ** (1 - alpha)) * ((probs / mean_across) ** alpha) if alpha > 0 else probs
             top = np.argsort(score)[-n_words:][::-1]
-            
             fig.add_trace(go.Bar(x=[vocab[i] for i in top], y=probs[top], marker_color=COLORS_10[k % len(COLORS_10)]), row=(k // 2) + 1, col=(k % 2) + 1)
-            
+
+        # --- Top mots globaux (somme sur les topics) à la période courante ---
+        corpus_counts = ms["corpus"]                              # [T, K, V]
+        global_counts = corpus_counts[t_idx].sum(dim=0).numpy()  # [V]
+        top_global = np.argsort(global_counts)[-n_words:][::-1]
+        fig.add_trace(
+            go.Bar(
+                x=[vocab[i] for i in top_global],
+                y=global_counts[top_global],
+                marker_color="#94a3b8",
+            ),
+            row=total_rows, col=1,
+        )
+
         fig.update_layout(
             template="plotly_white", showlegend=False,
-            height=260 * int(np.ceil(K / 2)),
+            height=260 * topic_rows + 220,
             margin=dict(t=56, b=48, l=48, r=24),
             font=dict(family="-apple-system, BlinkMacSystemFont, 'Inter', sans-serif", size=11, color="#475569"),
         )
@@ -981,5 +1010,41 @@ def server(input, output, session):
         ms = model_state.get()
         if not ms: return ui.p("—", style="color:var(--muted); font-family:var(--mono);")
         return ui.div(f"{ms['lr']:.5f}", style="font-family:var(--mono); font-size:1.4rem; font-weight:700; color:#0ea5e9;")
+
+
+    @output
+    @render.ui
+    def wordclouds():
+        ms = model_state.get()
+        if not ms: return ui.p("Train a model to see word clouds.", style="color:var(--muted);")
+        model, vocab, K = ms["model"], ms["vocab"], ms["model"].K
+        imgs = []
+        COLORS_HEX = ["#3b82f6","#f97316","#22c55e","#a855f7","#ef4444","#06b6d4","#eab308","#ec4899","#14b8a6","#f59e0b"]
+        for k in range(K):
+            m_t, _ = get_smoothed_beta(model, k)
+            probs = torch.softmax(m_t.mean(dim=0), dim=-1).detach().numpy()
+            freq = {vocab[i]: float(probs[i]) for i in range(len(vocab))}
+            color = COLORS_HEX[k % len(COLORS_HEX)]
+            def make_color_func(c):
+                import random
+                r, g, b = int(c[1:3],16), int(c[3:5],16), int(c[5:7],16)
+                def _f(*args, **kwargs):
+                    lum = random.randint(0, 60)
+                    return f"rgb({min(r+lum,255)},{min(g+lum,255)},{min(b+lum,255)})"
+                return _f
+            wc = WordCloud(
+                width=400, height=220, background_color="white",
+                max_words=60, color_func=make_color_func(color),
+                prefer_horizontal=0.9, margin=4,
+            ).generate_from_frequencies(freq)
+            buf = io.BytesIO()
+            wc.to_image().save(buf, format="PNG")
+            b64 = __import__("base64").b64encode(buf.getvalue()).decode()
+            imgs.append(ui.tags.div(
+                ui.tags.p(f"Topic {k}", style=f"font-weight:700; color:{color}; margin:0 0 6px 0; font-size:0.85rem; text-transform:uppercase; letter-spacing:.05em;"),
+                ui.tags.img(src=f"data:image/png;base64,{b64}", style="width:100%; border-radius:8px;"),
+                style="flex:1; min-width:280px; max-width:420px;"
+            ))
+        return ui.tags.div(*imgs, style="display:flex; flex-wrap:wrap; gap:16px;")
 
 app = App(app_ui, server)
