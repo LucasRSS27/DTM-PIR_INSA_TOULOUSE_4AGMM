@@ -697,7 +697,7 @@ def server(input, output, session):
         return {
             "corpus": corpus, "vocab": vocab, "time_labels": time_labels_f, "beta_init": beta_init, "alpha_init": alpha_init,
             "df": df, "word_counts": wc, "n_docs": len(df), "vocab_size": len(vocab), "avg_len": float(wc.mean()) if len(wc)>0 else 0.0
-        }
+        } 
 
     @reactive.effect
     @reactive.event(input.apply_filter)
