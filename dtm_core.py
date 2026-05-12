@@ -321,31 +321,37 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
     # Lemmatization
     # -------------------------
     if LEMMATIZE:
-        if progress_callback: progress_callback(35, "Lemmatization in progress (spaCy)...")
-        else: print("Lemmatization in progress (spaCy)...")
+        if progress_callback:
+            progress_callback(35, "Lemmatization in progress (spaCy)...")
+        else:
+            print("Lemmatization in progress (spaCy)...")
+
+        USEFUL_POS = {"NOUN", "VERB", "ADJ", "ADV", "PROPN"}
+        batch_size = max(500, len(df) // 20)
+
         texts = []
-        for doc in nlp.pipe(df[col_text], batch_size=500):
-            # Tokens appartenant à une entité NER → forme originale (pas de lemmatisation)
+        for doc in nlp.pipe(df[col_text], batch_size=batch_size):
             ner_tokens = {token.i for ent in doc.ents for token in ent}
             tokens = []
             for token in doc:
-                if not token.is_alpha or token.is_space:
+                if not token.is_alpha:
                     continue
-                if token.i in ner_tokens:
-                    tokens.append(token.text.lower())   # nom propre : forme brute
-                else:
-                    tokens.append(token.lemma_.lower()) # mot commun : lemme
+                if token.pos_ not in USEFUL_POS:
+                    continue
+                lemma = token.text.lower() if token.i in ner_tokens else token.lemma_.lower()
+                if len(lemma) < 3:
+                    continue
+                tokens.append(lemma)
             texts.append(" ".join(tokens))
 
         df[col_text] = texts
-        if progress_callback: progress_callback(55, "Lemmatization completed.")
-        else: print("  Lemmatization completed.")
-    else:
-        # Pas de lemmatisation mais on lowercase quand même
-        df[col_text] = df[col_text].str.lower()
 
-    df = df[df[col_text].str.strip() != ""]
-    df = df.sort_values(col_date).reset_index(drop=True)
+        if progress_callback:
+            progress_callback(55, "Lemmatization completed.")
+        else:
+            print("  Lemmatization completed.")
+    else:
+        df[col_text] = df[col_text].str.lower()
 
     # -------------------------
     # Time slicing
