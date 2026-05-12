@@ -393,7 +393,8 @@ def load_csv_data(path, col_date, col_text, granularity, n_topics,
         stop_words=list(stop_words),
         max_features=max_features,
         min_df=min_df,
-        max_df=max_df
+        max_df=max_df,
+        token_pattern=r"(?u)\b\w{3,}\b",  # exclut les tokens < 3 caractères (ex: "pr", "mr")
     )
 
     dtm = vectorizer.fit_transform(df[col_text]).toarray().astype(np.float64)
