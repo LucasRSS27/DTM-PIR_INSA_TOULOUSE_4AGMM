@@ -153,6 +153,20 @@ input[type=file] { display: none !important; }
     text-overflow: ellipsis;
     box-shadow: none !important;
 }
+/* ── FILE UPLOAD PROGRESS BAR ────────────────────────────────── */
+#shiny-progress-output .progress,
+.shiny-file-input-progress .progress,
+.progress {
+    height: 30px !important;  /* ← ajuste cette valeur selon ton goût */
+    border-radius: 999px !important;
+    background: var(--soft) !important;
+    overflow: hidden !important;
+}
+.progress .progress-bar {
+    background: var(--accent) !important;
+    border-radius: 999px !important;
+    transition: width 0.25s ease !important;
+}
 
 /* ── NAVBAR TABS ─────────────────────────────────────────────── */
 .navbar {
