@@ -250,7 +250,7 @@ import spacy
 
 def get_spacy_model(language: str):
     if language == "french":
-        return "fr_core_news_sm"
+        return "fr_core_news_lg"
     return "en_core_web_sm"
 
 
